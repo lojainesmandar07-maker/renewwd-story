@@ -79,7 +79,7 @@ class StoryLoader:
             "metadata": {
                 "name": "رحلة الشظايا",
                 "version": "3.0",
-                "variables": ["shards", "corruption", "mystery", "reputation", "alignment", "trust_aren", "world_stability", "xp", "level"],
+                "variables": ["shards", "corruption", "mystery", "reputation", "alignment", "trust_aren", "world_stability", "xp", "level", "knowledge_path"],
                 "achievements": ["first_choice"]
             },
             "parts": {
@@ -122,17 +122,22 @@ class StoryLoader:
         return self.data.get("metadata", {})
 
 # ============================================
-# قاعدة البيانات المتكاملة (Database)
+# قاعدة البيانات المتكاملة (Database) - محسنة
 # ============================================
 class Database:
     def __init__(self, db_file: str = "shard_game.db"):
         self.db_file = db_file
         self.init_db()
     
+    def _get_connection(self):
+        """إنشاء اتصال مع timeout لتجنب القفل"""
+        return sqlite3.connect(self.db_file, timeout=10)
+    
     def init_db(self):
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         
+        # جدول اللاعبين بكل المتغيرات الموجودة في القصة
         c.execute('''CREATE TABLE IF NOT EXISTS players (
             user_id INTEGER PRIMARY KEY,
             current_part TEXT DEFAULT 'PART_01',
@@ -145,6 +150,7 @@ class Database:
             world_stability INTEGER DEFAULT 100,
             xp INTEGER DEFAULT 0,
             level INTEGER DEFAULT 1,
+            knowledge_path INTEGER DEFAULT 0,
             location TEXT DEFAULT 'أنقاض',
             last_daily TEXT,
             last_updated TEXT
@@ -185,7 +191,7 @@ class Database:
         conn.close()
     
     def get_player(self, user_id: int) -> Optional[Dict]:
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute("SELECT * FROM players WHERE user_id = ?", (user_id,))
@@ -197,12 +203,12 @@ class Database:
     
     def create_player(self, user_id: int):
         now = datetime.now().isoformat()
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute('''INSERT OR IGNORE INTO players 
-                     (user_id, current_part, shards, corruption, mystery, reputation, alignment, trust_aren, world_stability, xp, level, location, last_daily, last_updated)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (user_id, 'PART_01', 0, 0, 0, 0, 'Gray', 0, 100, 0, 1, 'أنقاض', None, now))
+                     (user_id, current_part, shards, corruption, mystery, reputation, alignment, trust_aren, world_stability, xp, level, knowledge_path, location, last_daily, last_updated)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (user_id, 'PART_01', 0, 0, 0, 0, 'Gray', 0, 100, 0, 1, 0, 'أنقاض', None, now))
         conn.commit()
         self.add_to_inventory(user_id, "potion", "🧪 جرعة نقاء", 3)
         conn.close()
@@ -210,7 +216,7 @@ class Database:
     def update_player(self, user_id: int, updates: Dict):
         if not updates:
             return
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
         params = list(updates.values())
@@ -222,7 +228,7 @@ class Database:
     
     def unlock_achievement(self, user_id: int, achievement_id: str) -> bool:
         try:
-            conn = sqlite3.connect(self.db_file)
+            conn = self._get_connection()
             c = conn.cursor()
             c.execute("INSERT INTO achievements (user_id, achievement_id, unlocked_at) VALUES (?, ?, ?)",
                       (user_id, achievement_id, datetime.now().isoformat()))
@@ -233,7 +239,7 @@ class Database:
             return False
     
     def get_achievements(self, user_id: int) -> List[Dict]:
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute("SELECT * FROM achievements WHERE user_id = ?", (user_id,))
@@ -242,7 +248,7 @@ class Database:
         return [dict(r) for r in rows]
     
     def set_flag(self, user_id: int, flag_name: str, value: int = 1):
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute('''INSERT INTO flags (user_id, flag_name, flag_value)
                      VALUES (?, ?, ?)
@@ -252,7 +258,7 @@ class Database:
         conn.close()
     
     def get_flag(self, user_id: int, flag_name: str) -> int:
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute("SELECT flag_value FROM flags WHERE user_id = ? AND flag_name = ?", (user_id, flag_name))
         result = c.fetchone()
@@ -262,7 +268,7 @@ class Database:
     def add_to_inventory(self, user_id: int, item_id: str, item_name: str = None, quantity: int = 1):
         if not item_name:
             item_name = item_id
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute('''INSERT INTO inventory (user_id, item_id, item_name, quantity)
                      VALUES (?, ?, ?, ?)
@@ -274,7 +280,7 @@ class Database:
         conn.close()
     
     def remove_from_inventory(self, user_id: int, item_id: str, quantity: int = 1):
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute('''UPDATE inventory SET quantity = quantity - ?
                      WHERE user_id = ? AND item_id = ?''', (quantity, user_id, item_id))
@@ -283,7 +289,7 @@ class Database:
         conn.close()
     
     def get_inventory(self, user_id: int) -> List[Dict]:
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute("SELECT item_id, item_name, quantity FROM inventory WHERE user_id = ? AND quantity > 0", (user_id,))
@@ -292,7 +298,7 @@ class Database:
         return [dict(r) for r in rows]
     
     def has_item(self, user_id: int, item_id: str, quantity: int = 1) -> bool:
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?", (user_id, item_id))
         result = c.fetchone()
@@ -300,7 +306,7 @@ class Database:
         return result is not None and result[0] >= quantity
     
     def add_history(self, user_id: int, part_id: str, choice_text: str, impact: str):
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         c = conn.cursor()
         c.execute("INSERT INTO history (user_id, part_id, choice_text, impact_summary, timestamp) VALUES (?, ?, ?, ?, ?)",
                   (user_id, part_id, choice_text, impact, datetime.now().isoformat()))
@@ -308,7 +314,7 @@ class Database:
         conn.close()
     
     def get_history(self, user_id: int, limit: int = 10) -> List[Dict]:
-        conn = sqlite3.connect(self.db_file)
+        conn = self._get_connection()
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute("SELECT * FROM history WHERE user_id = ? ORDER BY id DESC LIMIT ?", (user_id, limit))
@@ -336,7 +342,7 @@ class GameUI:
         return {"Light": "✨", "Gray": "⚪", "Dark": "🌑"}.get(alignment, "⚪")
 
 # ============================================
-# البوت الرئيسي (محدث مع الفواصل)
+# البوت الرئيسي مع الفواصل
 # ============================================
 class ShardBot(commands.Bot):
     def __init__(self):
@@ -438,6 +444,7 @@ class ShardBot(commands.Bot):
             f"{GameUI.get_alignment_emoji(p.get('alignment', 'Gray'))} **التوجه:** {p.get('alignment', 'Gray')}\n"
             f"🤝 **ثقة أرين:** {p.get('trust_aren', 0)}%\n"
             f"🌍 **استقرار العالم:** {GameUI.create_progress_bar(p.get('world_stability', 100), 100)}\n"
+            f"📚 **المعرفة:** {p.get('knowledge_path', 0)}/100\n"
             f"🌟 **المستوى:** {p.get('level', 1)} ({p.get('xp', 0)}/100 XP)"
         )
         embed.add_field(name="🛡️ حالة المغامر", value=stats, inline=False)
@@ -447,7 +454,7 @@ class ShardBot(commands.Bot):
 bot = ShardBot()
 
 # ============================================
-# عرض القصة مع الأزرار
+# عرض القصة مع الأزرار (محدث)
 # ============================================
 class StoryView(discord.ui.View):
     def __init__(self, bot, user_id: int, part_data: Dict):
@@ -561,12 +568,15 @@ class StoryView(discord.ui.View):
                                 pass
                         continue
                     
+                    # متغيرات نصية
                     if var in ["alignment", "dragon_alliance", "rival_status"]:
                         updates[var] = val
                         impact_log.append(f"{var} = {val}")
                     else:
+                        # متغيرات رقمية
                         current = player.get(var, 0)
                         new_val = current + val
+                        # حدود خاصة
                         if var == "corruption":
                             new_val = GameUI.clamp(new_val, 0, 100)
                         elif var == "mystery":
@@ -576,6 +586,8 @@ class StoryView(discord.ui.View):
                         elif var == "reputation":
                             new_val = GameUI.clamp(new_val, -50, 50)
                         elif var == "trust_aren":
+                            new_val = GameUI.clamp(new_val, 0, 100)
+                        elif var == "knowledge_path":
                             new_val = GameUI.clamp(new_val, 0, 100)
                         elif var == "shards":
                             new_val = max(0, new_val)
@@ -626,7 +638,7 @@ class StoryView(discord.ui.View):
         return callback
 
 # ============================================
-# أوامر الس slash
+# أوامر الس slash (نفسها مع إضافة المتغير knowledge_path)
 # ============================================
 @bot.tree.command(name="ابدأ", description="🚀 ابدأ رحلة الشظايا")
 async def start(interaction: discord.Interaction):
@@ -642,7 +654,7 @@ async def start(interaction: discord.Interaction):
             await continue_game(interaction)
         
         async def reset_callback(interaction: discord.Interaction):
-            conn = sqlite3.connect(bot.db.db_file)
+            conn = sqlite3.connect(bot.db.db_file, timeout=10)
             c = conn.cursor()
             c.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
             c.execute("DELETE FROM achievements WHERE user_id = ?", (user_id,))
@@ -714,6 +726,7 @@ async def profile(interaction: discord.Interaction):
         f"{GameUI.get_alignment_emoji(player['alignment'])} **التوجه:** {player['alignment']}\n"
         f"🤝 **ثقة أرين:** {player['trust_aren']}%\n"
         f"🌍 **استقرار العالم:** {player['world_stability']}%\n"
+        f"📚 **المعرفة:** {player['knowledge_path']}/100\n"
         f"🌟 **المستوى:** {player['level']} ({player['xp']}/100 XP)"
     )
     embed.description = char_stats
@@ -872,7 +885,7 @@ async def reset(interaction: discord.Interaction):
     
     async def confirm_callback(interaction: discord.Interaction):
         user_id = interaction.user.id
-        conn = sqlite3.connect(bot.db.db_file)
+        conn = sqlite3.connect(bot.db.db_file, timeout=10)
         c = conn.cursor()
         c.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
         c.execute("DELETE FROM achievements WHERE user_id = ?", (user_id,))
