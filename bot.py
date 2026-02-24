@@ -338,7 +338,7 @@ class GameUI:
         return {"Light": "✨", "Gray": "⚪", "Dark": "🌑"}.get(alignment, "⚪")
 
 # ============================================
-# عرض القصة مع الأزرار (محدث مع تسجيل)
+# عرض القصة مع الأزرار (محدث لمعالجة Unknown Interaction)
 # ============================================
 class StoryView(discord.ui.View):
     def __init__(self, bot, user_id: int, part_data: Dict):
@@ -356,7 +356,6 @@ class StoryView(discord.ui.View):
             elif "هرب" in choice.get("text", ""):
                 style = discord.ButtonStyle.secondary
             
-            # إنشاء custom_id ثابت نسبياً
             custom_id = f"c_{self.part_data['id']}_{i}_{self.user_id}"
             
             btn = discord.ui.Button(
@@ -370,15 +369,17 @@ class StoryView(discord.ui.View):
     
     def _create_callback(self, choice):
         async def callback(interaction: discord.Interaction):
-            # تسجيل الضغط على الزر
             logger.info(f"User {interaction.user.id} clicked button: {choice.get('text')}")
+            
+            # التحقق من ملكية القصة
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ هذه القصة ليست لك!", ephemeral=True)
+                return
+            
+            # استخدام defer مع التفكير في مهلة طويلة
+            await interaction.response.defer()
+            
             try:
-                if interaction.user.id != self.user_id:
-                    await interaction.response.send_message("❌ هذه القصة ليست لك!", ephemeral=True)
-                    return
-                
-                await interaction.response.defer()
-                
                 player = self.bot.db.get_player(self.user_id)
                 if not player:
                     self.bot.db.create_player(self.user_id)
@@ -493,20 +494,29 @@ class StoryView(discord.ui.View):
                 if next_part:
                     updated_player = self.bot.db.get_player(self.user_id)
                     embed = self.bot.create_game_embed(next_part, updated_player)
-                    await interaction.edit_original_response(
+                    
+                    # تحديث الرسالة الأصلية باستخدام followup.edit_message
+                    await interaction.followup.edit_message(
+                        message_id=interaction.message.id,
                         content="✅ تم تنفيذ قرارك!" if success else "⚠️ فشلت المحاولة وتغير المسار!",
                         embed=embed,
                         view=StoryView(self.bot, self.user_id, next_part)
                     )
                 else:
-                    await interaction.edit_original_response(
+                    await interaction.followup.edit_message(
+                        message_id=interaction.message.id,
                         content="🏁 شكراً لك على إنهاء الرحلة!",
                         embed=None,
                         view=None
                     )
+            
             except Exception as e:
-                logger.error(f"خطأ في callback: {e}", exc_info=True)
-                await interaction.followup.send(f"❌ حدث خطأ غير متوقع: {str(e)}", ephemeral=True)
+                logger.error(f"خطأ في معالجة الزر: {e}", exc_info=True)
+                # محاولة إرسال رسالة خطأ (إذا كان التفاعل لا يزال صالحاً)
+                try:
+                    await interaction.followup.send(f"❌ حدث خطأ: {str(e)}", ephemeral=True)
+                except:
+                    pass
         
         return callback
 
