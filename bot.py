@@ -47,7 +47,7 @@ def run():
 
 def keep_alive():
     t = Thread(target=run)
-    t.daemon = True  # يجعل الخيط يغلق تلقائياً عند إغلاق البوت
+    t.daemon = True
     t.start()
 
 # ============================================
@@ -338,7 +338,7 @@ class GameUI:
         return {"Light": "✨", "Gray": "⚪", "Dark": "🌑"}.get(alignment, "⚪")
 
 # ============================================
-# عرض القصة مع الأزرار
+# عرض القصة مع الأزرار (محدث مع تسجيل)
 # ============================================
 class StoryView(discord.ui.View):
     def __init__(self, bot, user_id: int, part_data: Dict):
@@ -356,9 +356,12 @@ class StoryView(discord.ui.View):
             elif "هرب" in choice.get("text", ""):
                 style = discord.ButtonStyle.secondary
             
+            # إنشاء custom_id ثابت نسبياً
+            custom_id = f"c_{self.part_data['id']}_{i}_{self.user_id}"
+            
             btn = discord.ui.Button(
                 label=choice.get("text", f"خيار {i+1}")[:80],
-                custom_id=f"c_{self.part_data['id']}_{i}_{self.user_id}",
+                custom_id=custom_id,
                 emoji=choice.get("emoji"),
                 style=style
             )
@@ -367,137 +370,143 @@ class StoryView(discord.ui.View):
     
     def _create_callback(self, choice):
         async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message("❌ هذه القصة ليست لك!", ephemeral=True)
-                return
-            
-            await interaction.response.defer()
-            
-            player = self.bot.db.get_player(self.user_id)
-            if not player:
-                self.bot.db.create_player(self.user_id)
+            # تسجيل الضغط على الزر
+            logger.info(f"User {interaction.user.id} clicked button: {choice.get('text')}")
+            try:
+                if interaction.user.id != self.user_id:
+                    await interaction.response.send_message("❌ هذه القصة ليست لك!", ephemeral=True)
+                    return
+                
+                await interaction.response.defer()
+                
                 player = self.bot.db.get_player(self.user_id)
-            
-            # فحص الشروط
-            requirements = choice.get("require", {})
-            for var, min_val in requirements.items():
-                if var == "flag":
-                    if self.bot.db.get_flag(self.user_id, min_val) == 0:
-                        await interaction.followup.send(f"⚠️ لا يمكنك اختيار هذا المسار بعد.", ephemeral=True)
-                        return
+                if not player:
+                    self.bot.db.create_player(self.user_id)
+                    player = self.bot.db.get_player(self.user_id)
+                
+                # فحص الشروط
+                requirements = choice.get("require", {})
+                for var, min_val in requirements.items():
+                    if var == "flag":
+                        if self.bot.db.get_flag(self.user_id, min_val) == 0:
+                            await interaction.followup.send(f"⚠️ لا يمكنك اختيار هذا المسار بعد.", ephemeral=True)
+                            return
+                    else:
+                        if player.get(var, 0) < min_val:
+                            await interaction.followup.send(
+                                f"⚠️ **متطلب ناقص!** تحتاج إلى `{min_val}` من نقاط `{var}` لاختيار هذا المسار.",
+                                ephemeral=True
+                            )
+                            return
+                
+                # نظام الاحتمالات
+                success = random.randint(1, 100) <= choice.get("chance", 100)
+                next_id = choice.get("next") if success else choice.get("fail_next", choice.get("next"))
+                effects = choice.get("effects" if success else "fail_effects", {})
+                
+                updates = {"current_part": next_id}
+                impact_log = []
+                
+                for var, val in effects.items():
+                    if var == "achievement":
+                        if self.bot.db.unlock_achievement(self.user_id, val):
+                            ach = self.bot.story_loader.get_achievement_info(val)
+                            await interaction.followup.send(f"🏆 **إنجاز جديد:** {ach['emoji']} {ach['name']}", ephemeral=True)
+                        continue
+                    
+                    if var == "inventory_add":
+                        if isinstance(val, dict):
+                            item_id = val.get("id", "unknown")
+                            item_name = val.get("name", item_id)
+                            qty = val.get("qty", 1)
+                            self.bot.db.add_to_inventory(self.user_id, item_id, item_name, qty)
+                            impact_log.append(f"حصلت على {item_name} x{qty}")
+                        else:
+                            self.bot.db.add_to_inventory(self.user_id, val, val)
+                            impact_log.append(f"حصلت على {val}")
+                        continue
+                    
+                    if var == "inventory_remove":
+                        if isinstance(val, dict):
+                            item_id = val.get("id")
+                            qty = val.get("qty", 1)
+                            self.bot.db.remove_from_inventory(self.user_id, item_id, qty)
+                            impact_log.append(f"فقدت {item_id} x{qty}")
+                        else:
+                            self.bot.db.remove_from_inventory(self.user_id, val)
+                            impact_log.append(f"فقدت {val}")
+                        continue
+                    
+                    if var == "flag":
+                        self.bot.db.set_flag(self.user_id, val, 1)
+                        impact_log.append(f"علم: {val}")
+                        continue
+                    
+                    if var == "relationship":
+                        if ':' in val:
+                            char, change = val.split(':', 1)
+                            try:
+                                change = int(change)
+                                self.bot.db.set_flag(self.user_id, f"rel_{char}", change)
+                                impact_log.append(f"علاقة {char}: {change:+}")
+                            except:
+                                pass
+                        continue
+                    
+                    if var in ["alignment", "dragon_alliance", "rival_status"]:
+                        updates[var] = val
+                        impact_log.append(f"{var} = {val}")
+                    else:
+                        current = player.get(var, 0)
+                        new_val = current + val
+                        if var == "corruption":
+                            new_val = GameUI.clamp(new_val, 0, 100)
+                        elif var == "mystery":
+                            new_val = GameUI.clamp(new_val, 0, 100)
+                        elif var == "world_stability":
+                            new_val = GameUI.clamp(new_val, 0, 100)
+                        elif var == "reputation":
+                            new_val = GameUI.clamp(new_val, -50, 50)
+                        elif var == "trust_aren":
+                            new_val = GameUI.clamp(new_val, 0, 100)
+                        elif var == "shards":
+                            new_val = max(0, new_val)
+                        else:
+                            new_val = max(0, new_val)
+                        updates[var] = new_val
+                        impact_log.append(f"{var}: {val:+}")
+                
+                xp_gain = random.randint(10, 20)
+                updates["xp"] = player.get("xp", 0) + xp_gain
+                impact_log.append(f"XP: +{xp_gain}")
+                
+                if updates["xp"] >= 100:
+                    updates["xp"] = updates["xp"] - 100
+                    updates["level"] = player.get("level", 1) + 1
+                    impact_log.append(f"⬆️ مستوى {updates['level']}!")
+                
+                self.bot.db.update_player(self.user_id, updates)
+                impact_summary = ", ".join(impact_log) if impact_log else "لا تأثير"
+                self.bot.db.add_history(self.user_id, self.part_data['id'], choice.get('text', ''), impact_summary)
+                
+                next_part = self.bot.story_loader.get_part(next_id)
+                if next_part:
+                    updated_player = self.bot.db.get_player(self.user_id)
+                    embed = self.bot.create_game_embed(next_part, updated_player)
+                    await interaction.edit_original_response(
+                        content="✅ تم تنفيذ قرارك!" if success else "⚠️ فشلت المحاولة وتغير المسار!",
+                        embed=embed,
+                        view=StoryView(self.bot, self.user_id, next_part)
+                    )
                 else:
-                    if player.get(var, 0) < min_val:
-                        await interaction.followup.send(
-                            f"⚠️ **متطلب ناقص!** تحتاج إلى `{min_val}` من نقاط `{var}` لاختيار هذا المسار.",
-                            ephemeral=True
-                        )
-                        return
-            
-            # نظام الاحتمالات
-            success = random.randint(1, 100) <= choice.get("chance", 100)
-            next_id = choice.get("next") if success else choice.get("fail_next", choice.get("next"))
-            effects = choice.get("effects" if success else "fail_effects", {})
-            
-            updates = {"current_part": next_id}
-            impact_log = []
-            
-            for var, val in effects.items():
-                if var == "achievement":
-                    if self.bot.db.unlock_achievement(self.user_id, val):
-                        ach = self.bot.story_loader.get_achievement_info(val)
-                        await interaction.followup.send(f"🏆 **إنجاز جديد:** {ach['emoji']} {ach['name']}", ephemeral=True)
-                    continue
-                
-                if var == "inventory_add":
-                    if isinstance(val, dict):
-                        item_id = val.get("id", "unknown")
-                        item_name = val.get("name", item_id)
-                        qty = val.get("qty", 1)
-                        self.bot.db.add_to_inventory(self.user_id, item_id, item_name, qty)
-                        impact_log.append(f"حصلت على {item_name} x{qty}")
-                    else:
-                        self.bot.db.add_to_inventory(self.user_id, val, val)
-                        impact_log.append(f"حصلت على {val}")
-                    continue
-                
-                if var == "inventory_remove":
-                    if isinstance(val, dict):
-                        item_id = val.get("id")
-                        qty = val.get("qty", 1)
-                        self.bot.db.remove_from_inventory(self.user_id, item_id, qty)
-                        impact_log.append(f"فقدت {item_id} x{qty}")
-                    else:
-                        self.bot.db.remove_from_inventory(self.user_id, val)
-                        impact_log.append(f"فقدت {val}")
-                    continue
-                
-                if var == "flag":
-                    self.bot.db.set_flag(self.user_id, val, 1)
-                    impact_log.append(f"علم: {val}")
-                    continue
-                
-                if var == "relationship":
-                    if ':' in val:
-                        char, change = val.split(':', 1)
-                        try:
-                            change = int(change)
-                            self.bot.db.set_flag(self.user_id, f"rel_{char}", change)
-                            impact_log.append(f"علاقة {char}: {change:+}")
-                        except:
-                            pass
-                    continue
-                
-                if var in ["alignment", "dragon_alliance", "rival_status"]:
-                    updates[var] = val
-                    impact_log.append(f"{var} = {val}")
-                else:
-                    current = player.get(var, 0)
-                    new_val = current + val
-                    if var == "corruption":
-                        new_val = GameUI.clamp(new_val, 0, 100)
-                    elif var == "mystery":
-                        new_val = GameUI.clamp(new_val, 0, 100)
-                    elif var == "world_stability":
-                        new_val = GameUI.clamp(new_val, 0, 100)
-                    elif var == "reputation":
-                        new_val = GameUI.clamp(new_val, -50, 50)
-                    elif var == "trust_aren":
-                        new_val = GameUI.clamp(new_val, 0, 100)
-                    elif var == "shards":
-                        new_val = max(0, new_val)
-                    else:
-                        new_val = max(0, new_val)
-                    updates[var] = new_val
-                    impact_log.append(f"{var}: {val:+}")
-            
-            xp_gain = random.randint(10, 20)
-            updates["xp"] = player.get("xp", 0) + xp_gain
-            impact_log.append(f"XP: +{xp_gain}")
-            
-            if updates["xp"] >= 100:
-                updates["xp"] = updates["xp"] - 100
-                updates["level"] = player.get("level", 1) + 1
-                impact_log.append(f"⬆️ مستوى {updates['level']}!")
-            
-            self.bot.db.update_player(self.user_id, updates)
-            impact_summary = ", ".join(impact_log) if impact_log else "لا تأثير"
-            self.bot.db.add_history(self.user_id, self.part_data['id'], choice.get('text', ''), impact_summary)
-            
-            next_part = self.bot.story_loader.get_part(next_id)
-            if next_part:
-                updated_player = self.bot.db.get_player(self.user_id)
-                embed = self.bot.create_game_embed(next_part, updated_player)
-                await interaction.edit_original_response(
-                    content="✅ تم تنفيذ قرارك!" if success else "⚠️ فشلت المحاولة وتغير المسار!",
-                    embed=embed,
-                    view=StoryView(self.bot, self.user_id, next_part)
-                )
-            else:
-                await interaction.edit_original_response(
-                    content="🏁 شكراً لك على إنهاء الرحلة!",
-                    embed=None,
-                    view=None
-                )
+                    await interaction.edit_original_response(
+                        content="🏁 شكراً لك على إنهاء الرحلة!",
+                        embed=None,
+                        view=None
+                    )
+            except Exception as e:
+                logger.error(f"خطأ في callback: {e}", exc_info=True)
+                await interaction.followup.send(f"❌ حدث خطأ غير متوقع: {str(e)}", ephemeral=True)
         
         return callback
 
