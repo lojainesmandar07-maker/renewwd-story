@@ -47,6 +47,7 @@ def run():
 
 def keep_alive():
     t = Thread(target=run)
+    t.daemon = True  # يجعل الخيط يغلق تلقائياً عند إغلاق البوت
     t.start()
 
 # ============================================
@@ -77,7 +78,7 @@ class StoryLoader:
         return {
             "metadata": {
                 "name": "رحلة الشظايا",
-                "version": "2.0",
+                "version": "3.0",
                 "variables": ["shards", "corruption", "mystery", "reputation", "alignment", "trust_aren", "world_stability", "xp", "level"],
                 "achievements": ["first_choice"]
             },
@@ -134,7 +135,6 @@ class Database:
         conn = sqlite3.connect(self.db_file)
         c = conn.cursor()
         
-        # جدول اللاعبين - كل متغير في عمود منفصل
         c.execute('''CREATE TABLE IF NOT EXISTS players (
             user_id INTEGER PRIMARY KEY,
             current_part TEXT DEFAULT 'PART_01',
@@ -152,7 +152,6 @@ class Database:
             last_updated TEXT
         )''')
         
-        # جدول الإنجازات
         c.execute('''CREATE TABLE IF NOT EXISTS achievements (
             user_id INTEGER,
             achievement_id TEXT,
@@ -160,7 +159,6 @@ class Database:
             PRIMARY KEY (user_id, achievement_id)
         )''')
         
-        # جدول المخزون
         c.execute('''CREATE TABLE IF NOT EXISTS inventory (
             user_id INTEGER,
             item_id TEXT,
@@ -169,7 +167,6 @@ class Database:
             PRIMARY KEY (user_id, item_id)
         )''')
         
-        # جدول الأعلام (flags)
         c.execute('''CREATE TABLE IF NOT EXISTS flags (
             user_id INTEGER,
             flag_name TEXT,
@@ -177,7 +174,6 @@ class Database:
             PRIMARY KEY (user_id, flag_name)
         )''')
         
-        # جدول تاريخ القرارات
         c.execute('''CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -210,10 +206,7 @@ class Database:
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                   (user_id, 'PART_01', 0, 0, 0, 0, 'Gray', 0, 100, 0, 1, 'أنقاض', None, now))
         conn.commit()
-        
-        # إضافة 3 جرعات شفاء عند بداية اللعبة
         self.add_to_inventory(user_id, "potion", "🧪 جرعة نقاء", 3)
-        
         conn.close()
     
     def update_player(self, user_id: int, updates: Dict):
@@ -268,7 +261,6 @@ class Database:
         conn.close()
         return result[0] if result else 0
     
-    # دوال المخزون
     def add_to_inventory(self, user_id: int, item_id: str, item_name: str = None, quantity: int = 1):
         if not item_name:
             item_name = item_id
@@ -386,7 +378,7 @@ class StoryView(discord.ui.View):
                 self.bot.db.create_player(self.user_id)
                 player = self.bot.db.get_player(self.user_id)
             
-            # فحص الشروط (requirements)
+            # فحص الشروط
             requirements = choice.get("require", {})
             for var, min_val in requirements.items():
                 if var == "flag":
@@ -401,7 +393,7 @@ class StoryView(discord.ui.View):
                         )
                         return
             
-            # نظام الاحتمالات (chance)
+            # نظام الاحتمالات
             success = random.randint(1, 100) <= choice.get("chance", 100)
             next_id = choice.get("next") if success else choice.get("fail_next", choice.get("next"))
             effects = choice.get("effects" if success else "fail_effects", {})
@@ -445,28 +437,22 @@ class StoryView(discord.ui.View):
                     continue
                 
                 if var == "relationship":
-                    # تنسيق: "character:change"
                     if ':' in val:
                         char, change = val.split(':', 1)
                         try:
                             change = int(change)
-                            # نستخدم جدول العلاقات (يمكن إضافته لاحقاً)
-                            # حالياً نخزنها في flags أو نهملها
                             self.bot.db.set_flag(self.user_id, f"rel_{char}", change)
                             impact_log.append(f"علاقة {char}: {change:+}")
                         except:
                             pass
                     continue
                 
-                # متغيرات نصية
                 if var in ["alignment", "dragon_alliance", "rival_status"]:
                     updates[var] = val
                     impact_log.append(f"{var} = {val}")
                 else:
-                    # متغيرات رقمية
                     current = player.get(var, 0)
                     new_val = current + val
-                    # حدود خاصة
                     if var == "corruption":
                         new_val = GameUI.clamp(new_val, 0, 100)
                     elif var == "mystery":
@@ -479,21 +465,15 @@ class StoryView(discord.ui.View):
                         new_val = GameUI.clamp(new_val, 0, 100)
                     elif var == "shards":
                         new_val = max(0, new_val)
-                    elif var == "xp":
-                        new_val = max(0, new_val)
-                    elif var == "level":
-                        new_val = max(1, new_val)
                     else:
                         new_val = max(0, new_val)
                     updates[var] = new_val
                     impact_log.append(f"{var}: {val:+}")
             
-            # XP عشوائي
             xp_gain = random.randint(10, 20)
             updates["xp"] = player.get("xp", 0) + xp_gain
             impact_log.append(f"XP: +{xp_gain}")
             
-            # رفع المستوى
             if updates["xp"] >= 100:
                 updates["xp"] = updates["xp"] - 100
                 updates["level"] = player.get("level", 1) + 1
@@ -535,7 +515,6 @@ class ShardBot(commands.Bot):
         logger.info("✅ تم مزامنة الأوامر")
     
     def create_game_embed(self, part: Dict, p: Dict) -> discord.Embed:
-        # اختيار اللون بناءً على التوجه
         alignment_color = {
             "Light": discord.Color.gold(),
             "Gray": discord.Color.light_grey(),
@@ -549,11 +528,9 @@ class ShardBot(commands.Bot):
             timestamp=datetime.now()
         )
         
-        # إضافة الصورة إذا وجدت
         if part.get("image"):
             embed.set_image(url=part["image"])
         
-        # إحصائيات
         stats = (
             f"💎 **الشظايا:** {p.get('shards', 0)}\n"
             f"🌑 **الفساد:** {GameUI.create_progress_bar(p.get('corruption', 0), 100)}\n"
@@ -565,7 +542,6 @@ class ShardBot(commands.Bot):
             f"🌟 **المستوى:** {p.get('level', 1)} ({p.get('xp', 0)}/100 XP)"
         )
         embed.add_field(name="🛡️ حالة المغامر", value=stats, inline=False)
-        
         embed.set_footer(text=f"معرف الجزء: {part['id']} • رحلة الشظايا")
         return embed
 
@@ -580,7 +556,6 @@ async def start(interaction: discord.Interaction):
     player = bot.db.get_player(user_id)
     
     if player and player.get('current_part') != 'PART_01':
-        # اللاعب لديه تقدم، نسأله ماذا يريد
         view = discord.ui.View()
         continue_btn = discord.ui.Button(label="⏩ استمر", style=discord.ButtonStyle.primary)
         reset_btn = discord.ui.Button(label="🔄 ابدأ من جديد", style=discord.ButtonStyle.danger)
@@ -589,7 +564,6 @@ async def start(interaction: discord.Interaction):
             await continue_game(interaction)
         
         async def reset_callback(interaction: discord.Interaction):
-            # حذف التقدم
             conn = sqlite3.connect(bot.db.db_file)
             c = conn.cursor()
             c.execute("DELETE FROM players WHERE user_id = ?", (user_id,))
@@ -599,7 +573,6 @@ async def start(interaction: discord.Interaction):
             c.execute("DELETE FROM history WHERE user_id = ?", (user_id,))
             conn.commit()
             conn.close()
-            # إنشاء جديد
             bot.db.create_player(user_id)
             part = bot.story_loader.get_part("PART_01")
             player = bot.db.get_player(user_id)
@@ -619,7 +592,6 @@ async def start(interaction: discord.Interaction):
         )
         await interaction.response.send_message(embed=embed, view=view)
     else:
-        # لاعب جديد أو بدون تقدم
         bot.db.create_player(user_id)
         part = bot.story_loader.get_part("PART_01")
         if not part:
@@ -656,7 +628,6 @@ async def profile(interaction: discord.Interaction):
         return
     
     embed = discord.Embed(title=f"👤 ملف المغامر: {interaction.user.name}", color=discord.Color.blue())
-    
     char_stats = (
         f"💎 **الشظايا:** {player['shards']}\n"
         f"🌑 **الفساد:** {player['corruption']}/100\n"
@@ -709,67 +680,40 @@ async def use_item(interaction: discord.Interaction, العنصر: str):
         await interaction.response.send_message("❌ ليس لديك هذا العنصر.", ephemeral=True)
         return
     
-    # تعريف تأثيرات العناصر
     if item_id == "potion":
         corruption = player['corruption']
         if corruption <= 0:
             await interaction.response.send_message("🌑 الفساد عند أدنى مستوى بالفعل.", ephemeral=True)
             return
-        
         new_corruption = max(0, corruption - 10)
         bot.db.remove_from_inventory(user_id, item_id, 1)
         bot.db.update_player(user_id, {"corruption": new_corruption})
-        
-        embed = discord.Embed(
-            title="🧪 استخدمت جرعة نقاء",
-            description=f"🌑 انخفض الفساد بمقدار 10. الفساد الآن {new_corruption}/100",
-            color=discord.Color.green()
-        )
+        embed = discord.Embed(title="🧪 استخدمت جرعة نقاء", description=f"🌑 انخفض الفساد بمقدار 10. الفساد الآن {new_corruption}/100", color=discord.Color.green())
         await interaction.response.send_message(embed=embed)
-    
     elif item_id == "crystal_heart":
         stability = player['world_stability']
         if stability >= 100:
             await interaction.response.send_message("🌍 استقرار العالم في أعلى مستوى.", ephemeral=True)
             return
-        
         new_stability = min(100, stability + 10)
         bot.db.remove_from_inventory(user_id, item_id, 1)
         bot.db.update_player(user_id, {"world_stability": new_stability})
-        
-        embed = discord.Embed(
-            title="💖 استخدمت قلب الكريستال",
-            description=f"🌍 زاد استقرار العالم بمقدار 10. الاستقرار الآن {new_stability}/100",
-            color=discord.Color.blue()
-        )
+        embed = discord.Embed(title="💖 استخدمت قلب الكريستال", description=f"🌍 زاد استقرار العالم بمقدار 10. الاستقرار الآن {new_stability}/100", color=discord.Color.blue())
         await interaction.response.send_message(embed=embed)
-    
     elif item_id == "pure_shard":
         corruption = player['corruption']
         new_corruption = max(0, corruption - 15)
         bot.db.remove_from_inventory(user_id, item_id, 1)
         bot.db.update_player(user_id, {"corruption": new_corruption, "alignment": "Light"})
-        
-        embed = discord.Embed(
-            title="✨ استخدمت شظية نقية",
-            description=f"🌑 انخفض الفساد بمقدار 15. أصبحت أكثر نقاءً! التوجه الآن: نور.",
-            color=discord.Color.gold()
-        )
+        embed = discord.Embed(title="✨ استخدمت شظية نقية", description=f"🌑 انخفض الفساد بمقدار 15. أصبحت أكثر نقاءً! التوجه الآن: نور.", color=discord.Color.gold())
         await interaction.response.send_message(embed=embed)
-    
     elif item_id == "dark_core":
         corruption = player['corruption']
         new_corruption = min(100, corruption + 20)
         bot.db.remove_from_inventory(user_id, item_id, 1)
         bot.db.update_player(user_id, {"corruption": new_corruption, "alignment": "Dark"})
-        
-        embed = discord.Embed(
-            title="🖤 استخدمت نواة الظلام",
-            description=f"🌑 زاد الفساد بمقدار 20. استسلمت للظلام! التوجه الآن: ظلام.",
-            color=discord.Color.dark_purple()
-        )
+        embed = discord.Embed(title="🖤 استخدمت نواة الظلام", description=f"🌑 زاد الفساد بمقدار 20. استسلمت للظلام! التوجه الآن: ظلام.", color=discord.Color.dark_purple())
         await interaction.response.send_message(embed=embed)
-    
     else:
         await interaction.response.send_message("❌ عنصر غير معروف.", ephemeral=True)
 
@@ -821,27 +765,25 @@ async def daily(interaction: discord.Interaction):
         await interaction.response.send_message(f"⌛ انتظر {hours} ساعة و {minutes} دقيقة للحصول على المكافأة التالية.", ephemeral=True)
         return
     
-    # مكافأة: شظايا + عناصر نادرة
     bonus_shards = random.randint(1, 5)
     bonus_type = random.randint(1, 100)
     updates = {"shards": player['shards'] + bonus_shards, "last_daily": now.isoformat()}
     impact = f"💎 +{bonus_shards} شظية"
     
-    if bonus_type <= 30:  # 30% جرعة
+    if bonus_type <= 30:
         bot.db.add_to_inventory(user_id, "potion", "🧪 جرعة نقاء", 1)
         impact += " و 🧪 جرعة"
-    elif bonus_type <= 45:  # 15% قلب كريستال
+    elif bonus_type <= 45:
         bot.db.add_to_inventory(user_id, "crystal_heart", "💖 قلب الكريستال", 1)
         impact += " و 💖 قلب كريستال"
-    elif bonus_type <= 55:  # 10% شظية نقية
+    elif bonus_type <= 55:
         bot.db.add_to_inventory(user_id, "pure_shard", "✨ شظية نقية", 1)
         impact += " و ✨ شظية نقية"
-    elif bonus_type <= 60:  # 5% نواة ظلام
+    elif bonus_type <= 60:
         bot.db.add_to_inventory(user_id, "dark_core", "🖤 نواة الظلام", 1)
         impact += " و 🖤 نواة ظلام"
     
     bot.db.update_player(user_id, updates)
-    
     await interaction.response.send_message(f"🎁 مكافأتك اليومية: {impact}!")
 
 @bot.tree.command(name="إعادة", description="🔄 ابدأ القصة من جديد (احذر: سيحذف كل تقدمك)")
@@ -887,8 +829,6 @@ async def map_command(interaction: discord.Interaction):
         return
     
     location = player.get('location', 'أنقاض')
-    
-    # خريطة نصية بسيطة (يمكن توسيعها)
     map_text = """
     ```
     [🌌] العالم الخارجي
@@ -953,6 +893,9 @@ if __name__ == "__main__":
     keep_alive()
     TOKEN = os.getenv('TOKEN')
     if TOKEN:
-        bot.run(TOKEN)
+        try:
+            bot.run(TOKEN)
+        except Exception as e:
+            logger.critical(f"🚨 خطأ في تشغيل البوت: {e}")
     else:
         logger.critical("🚨 التوكن غير موجود! ضع التوكن في متغير البيئة TOKEN")
