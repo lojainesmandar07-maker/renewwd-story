@@ -87,7 +87,6 @@ class StoryLoader:
                     "id": "PART_01",
                     "title": "⚡ الاكتشاف",
                     "text": "أنقاض موقع طاقة غامض...",
-                    "image": "",
                     "choices": [
                         {"text": "💎 لمس الشظية فورًا", "emoji": "💎", "next": "PART_02", "effects": {"shards": 1, "corruption": 5, "mystery": 3, "achievement": "first_choice"}},
                         {"text": "🔍 تحليلها أولًا", "emoji": "🔍", "next": "PART_02", "effects": {"shards": 1, "corruption": 2, "reputation": 1, "achievement": "first_choice"}}
@@ -97,7 +96,6 @@ class StoryLoader:
                     "id": "PART_02",
                     "title": "العبور الأول",
                     "text": "تمد يدك...",
-                    "image": "",
                     "choices": [
                         {"text": "🛡️ تقف", "emoji": "🛡️", "next": "PART_03", "effects": {"alignment": "Gray"}}
                     ]
@@ -338,7 +336,118 @@ class GameUI:
         return {"Light": "✨", "Gray": "⚪", "Dark": "🌑"}.get(alignment, "⚪")
 
 # ============================================
-# عرض القصة مع الأزرار (محدث لمعالجة Unknown Interaction)
+# البوت الرئيسي (محدث مع الفواصل)
+# ============================================
+class ShardBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
+        self.story_loader = StoryLoader()
+        self.db = Database()
+        
+        # فواصل الصور (Dividers) حسب النوع
+        self.divider_images = {
+            "combat": [
+                "https://media.discordapp.net/attachments/1475249056036032555/1475949842902683710/IMG_7045.png?ex=699f58e8&is=699e0768&hm=815d85803ff82737a7db1eb8cc4046c609038ee3d6bb6c520a83b323661196ee&=&format=webp&quality=lossless&width=600&height=90"
+            ],
+            "city": [
+                "https://media.discordapp.net/attachments/1475249056036032555/1475949756751679488/IMG_9090.png?ex=699f58d3&is=699e0753&hm=715e9b08ccceda4c2db76f2b6f698ec94487482ee2caa44ca4ed7c18b59edcbe&=&format=webp&quality=lossless&width=315&height=48"
+            ],
+            "nature": [
+                "https://media.discordapp.net/attachments/1475249056036032555/1475949815392243762/IMG_9160.gif?ex=699f58e1&is=699e0761&hm=e8ed0637453557bdb5ba5a051197e7fe4b5a3c9e0233eb797e94bfe08a7888a6&=&width=260&height=96"
+            ],
+            "dark": [
+                "https://media.discordapp.net/attachments/1475249056036032555/1475949841241866302/IMG_9464.gif?ex=699f58e7&is=699e0767&hm=23c42d53be60e6efb6a9fc8c8188798237b431157a6f116995d864a29f2e7d46&=&width=600&height=168"
+            ],
+            "shard": [
+                "https://media.discordapp.net/attachments/1475249056036032555/1475949754281234564/IMG_8722.gif?ex=699f58d3&is=699e0753&hm=e4ec64a8dd5dad334f8ebda6c756c1fb822d79b2d9829567fd1f93c2a861caaf&=&width=902&height=32"
+            ],
+            "ending": [
+                "https://media.discordapp.net/attachments/1475249056036032555/1475949741681541204/t3oosp.png?ex=699f58d0&is=699e0750&hm=bc244db5574d6188a1d50c707f2b02edf9b3cc4653ddf92f4b654cc23b2b7a86&=&format=webp&quality=lossless&width=1500&height=627"
+            ],
+            "general": [
+                "https://media.discordapp.net/attachments/1472302270770053120/1472303048943468695/IMG_3554.gif?ex=699f4390&is=699df210&hm=f8f917593e7434a346a8f09afa943fedbafbda9fd7c979334a3b09fc53ac4a3a&=&width=675&height=36"
+            ]
+        }
+    
+    def get_divider_for_part(self, part: Dict) -> str:
+        """تحديد فاصل مناسب بناءً على محتوى الجزء"""
+        text = (part.get('title', '') + ' ' + part.get('text', '')).lower()
+        location = part.get('location', '').lower()
+        
+        # كلمات مفتاحية للمعارك
+        combat_keywords = ['قتال', 'معركة', 'ضربة', 'سيف', 'يضرب', 'يهاجم', 'يدافع', 'حرب', 'سلاح', 'مقاتل']
+        if any(word in text for word in combat_keywords):
+            return random.choice(self.divider_images["combat"])
+        
+        # كلمات مفتاحية للمدن
+        city_keywords = ['مدينة', 'قرية', 'قصر', 'سوق', 'مملكة', 'إيلثار', 'بوابة', 'قلعة', 'بيت', 'شارع']
+        if any(word in text for word in city_keywords):
+            return random.choice(self.divider_images["city"])
+        
+        # كلمات مفتاحية للطبيعة
+        nature_keywords = ['غابة', 'نهر', 'جبل', 'شجرة', 'وادي', 'صحراء', 'بحر', 'سماء', 'أرض', 'عشب']
+        if any(word in text for word in nature_keywords):
+            return random.choice(self.divider_images["nature"])
+        
+        # كلمات مفتاحية للظلام والغموض
+        dark_keywords = ['ظل', 'ظلام', 'غموض', 'خوف', 'مخيف', 'كابوس', 'ليل', 'مظلم', 'رهبة', 'وحش']
+        if any(word in text for word in dark_keywords):
+            return random.choice(self.divider_images["dark"])
+        
+        # كلمات مفتاحية للشظايا
+        shard_keywords = ['شظية', 'شظايا', 'طاقة', 'كريستال', 'نور', 'ضوء', 'قوة', 'شعاع']
+        if any(word in text for word in shard_keywords):
+            return random.choice(self.divider_images["shard"])
+        
+        # كلمات مفتاحية للنهايات
+        ending_keywords = ['نهاية', 'ختام', 'انتهى', 'وداع', 'أخير', 'خاتمة']
+        if any(word in text for word in ending_keywords):
+            return random.choice(self.divider_images["ending"])
+        
+        # إذا لم يجد، يستخدم العام
+        return random.choice(self.divider_images["general"])
+    
+    async def setup_hook(self):
+        await self.tree.sync()
+        logger.info("✅ تم مزامنة الأوامر")
+    
+    def create_game_embed(self, part: Dict, p: Dict) -> discord.Embed:
+        alignment_color = {
+            "Light": discord.Color.gold(),
+            "Gray": discord.Color.light_grey(),
+            "Dark": discord.Color.dark_purple()
+        }.get(p.get('alignment', 'Gray'), discord.Color.purple())
+        
+        embed = discord.Embed(
+            title=f"📖 {part.get('title', 'فصل جديد')}",
+            description=part.get('text', '')[:4000],
+            color=alignment_color,
+            timestamp=datetime.now()
+        )
+        
+        # اختيار فاصل مناسب ووضعه كصورة
+        divider_url = self.get_divider_for_part(part)
+        embed.set_image(url=divider_url)
+        
+        # إحصائيات
+        stats = (
+            f"💎 **الشظايا:** {p.get('shards', 0)}\n"
+            f"🌑 **الفساد:** {GameUI.create_progress_bar(p.get('corruption', 0), 100)}\n"
+            f"🔮 **الغموض:** {GameUI.create_progress_bar(p.get('mystery', 0), 100)}\n"
+            f"⭐ **السمعة:** {p.get('reputation', 0)} ({p.get('reputation', 0)/50*100:.0f}%)\n"
+            f"{GameUI.get_alignment_emoji(p.get('alignment', 'Gray'))} **التوجه:** {p.get('alignment', 'Gray')}\n"
+            f"🤝 **ثقة أرين:** {p.get('trust_aren', 0)}%\n"
+            f"🌍 **استقرار العالم:** {GameUI.create_progress_bar(p.get('world_stability', 100), 100)}\n"
+            f"🌟 **المستوى:** {p.get('level', 1)} ({p.get('xp', 0)}/100 XP)"
+        )
+        embed.add_field(name="🛡️ حالة المغامر", value=stats, inline=False)
+        embed.set_footer(text=f"معرف الجزء: {part['id']} • رحلة الشظايا")
+        return embed
+
+bot = ShardBot()
+
+# ============================================
+# عرض القصة مع الأزرار
 # ============================================
 class StoryView(discord.ui.View):
     def __init__(self, bot, user_id: int, part_data: Dict):
@@ -371,12 +480,10 @@ class StoryView(discord.ui.View):
         async def callback(interaction: discord.Interaction):
             logger.info(f"User {interaction.user.id} clicked button: {choice.get('text')}")
             
-            # التحقق من ملكية القصة
             if interaction.user.id != self.user_id:
                 await interaction.response.send_message("❌ هذه القصة ليست لك!", ephemeral=True)
                 return
             
-            # استخدام defer مع التفكير في مهلة طويلة
             await interaction.response.defer()
             
             try:
@@ -495,7 +602,6 @@ class StoryView(discord.ui.View):
                     updated_player = self.bot.db.get_player(self.user_id)
                     embed = self.bot.create_game_embed(next_part, updated_player)
                     
-                    # تحديث الرسالة الأصلية باستخدام followup.edit_message
                     await interaction.followup.edit_message(
                         message_id=interaction.message.id,
                         content="✅ تم تنفيذ قرارك!" if success else "⚠️ فشلت المحاولة وتغير المسار!",
@@ -512,59 +618,12 @@ class StoryView(discord.ui.View):
             
             except Exception as e:
                 logger.error(f"خطأ في معالجة الزر: {e}", exc_info=True)
-                # محاولة إرسال رسالة خطأ (إذا كان التفاعل لا يزال صالحاً)
                 try:
                     await interaction.followup.send(f"❌ حدث خطأ: {str(e)}", ephemeral=True)
                 except:
                     pass
         
         return callback
-
-# ============================================
-# البوت الرئيسي
-# ============================================
-class ShardBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
-        self.story_loader = StoryLoader()
-        self.db = Database()
-    
-    async def setup_hook(self):
-        await self.tree.sync()
-        logger.info("✅ تم مزامنة الأوامر")
-    
-    def create_game_embed(self, part: Dict, p: Dict) -> discord.Embed:
-        alignment_color = {
-            "Light": discord.Color.gold(),
-            "Gray": discord.Color.light_grey(),
-            "Dark": discord.Color.dark_purple()
-        }.get(p.get('alignment', 'Gray'), discord.Color.purple())
-        
-        embed = discord.Embed(
-            title=f"📖 {part.get('title', 'فصل جديد')}",
-            description=part.get('text', '')[:4000],
-            color=alignment_color,
-            timestamp=datetime.now()
-        )
-        
-        if part.get("image"):
-            embed.set_image(url=part["image"])
-        
-        stats = (
-            f"💎 **الشظايا:** {p.get('shards', 0)}\n"
-            f"🌑 **الفساد:** {GameUI.create_progress_bar(p.get('corruption', 0), 100)}\n"
-            f"🔮 **الغموض:** {GameUI.create_progress_bar(p.get('mystery', 0), 100)}\n"
-            f"⭐ **السمعة:** {p.get('reputation', 0)} ({p.get('reputation', 0)/50*100:.0f}%)\n"
-            f"{GameUI.get_alignment_emoji(p.get('alignment', 'Gray'))} **التوجه:** {p.get('alignment', 'Gray')}\n"
-            f"🤝 **ثقة أرين:** {p.get('trust_aren', 0)}%\n"
-            f"🌍 **استقرار العالم:** {GameUI.create_progress_bar(p.get('world_stability', 100), 100)}\n"
-            f"🌟 **المستوى:** {p.get('level', 1)} ({p.get('xp', 0)}/100 XP)"
-        )
-        embed.add_field(name="🛡️ حالة المغامر", value=stats, inline=False)
-        embed.set_footer(text=f"معرف الجزء: {part['id']} • رحلة الشظايا")
-        return embed
-
-bot = ShardBot()
 
 # ============================================
 # أوامر الس slash
