@@ -519,6 +519,16 @@ class StoryView(discord.ui.View):
                 next_id = choice.get("next") if success else choice.get("fail_next", choice.get("next"))
                 effects = choice.get("effects" if success else "fail_effects", {})
                 
+                # التحقق من وجود الجزء التالي قبل تحديث قاعدة البيانات
+                next_part = self.bot.story_loader.get_part(next_id)
+                if next_id is None or next_part is None:
+                    logger.error(f"Missing next part referenced: {next_id} from {self.part_data.get('id')}")
+                    await interaction.followup.send(
+                        f"⚠️ خطأ في القصة: الجزء `{next_id}` غير معرف. سيتم إبلاغ المطور.",
+                        ephemeral=True
+                    )
+                    return
+                
                 updates = {"current_part": next_id}
                 impact_log = []
                 
@@ -609,24 +619,16 @@ class StoryView(discord.ui.View):
                 impact_summary = ", ".join(impact_log) if impact_log else "لا تأثير"
                 self.bot.db.add_history(self.user_id, self.part_data['id'], choice.get('text', ''), impact_summary)
                 
-                next_part = self.bot.story_loader.get_part(next_id)
-                if next_part:
-                    updated_player = self.bot.db.get_player(self.user_id)
-                    embed = self.bot.create_game_embed(next_part, updated_player)
-                    
-                    await interaction.followup.edit_message(
-                        message_id=interaction.message.id,
-                        content="✅ تم تنفيذ قرارك!" if success else "⚠️ فشلت المحاولة وتغير المسار!",
-                        embed=embed,
-                        view=StoryView(self.bot, self.user_id, next_part)
-                    )
-                else:
-                    await interaction.followup.edit_message(
-                        message_id=interaction.message.id,
-                        content="🏁 شكراً لك على إنهاء الرحلة!",
-                        embed=None,
-                        view=None
-                    )
+                # تحديث اللاعب بعد التغييرات
+                updated_player = self.bot.db.get_player(self.user_id)
+                embed = self.bot.create_game_embed(next_part, updated_player)
+                
+                # تعديل الرسالة الأصلية مباشرة
+                await interaction.message.edit(
+                    content="✅ تم تنفيذ قرارك!" if success else "⚠️ فشلت المحاولة وتغير المسار!",
+                    embed=embed,
+                    view=StoryView(self.bot, self.user_id, next_part)
+                )
             
             except Exception as e:
                 logger.error(f"خطأ في معالجة الزر: {e}", exc_info=True)
